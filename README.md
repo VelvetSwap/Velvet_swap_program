@@ -3,15 +3,16 @@
 [![Solana](https://img.shields.io/badge/Solana-Devnet-9945FF)](https://solana.com)
 [![Light Protocol](https://img.shields.io/badge/Light%20Protocol-V2-3B82F6)](https://lightprotocol.com)
 [![Inco Network](https://img.shields.io/badge/Inco-FHE-22C55E)](https://inco.network)
+[![Range Protocol](https://img.shields.io/badge/Range-Compliance-3B82F6)](https://range.org)
 
-## Privacy Layers
+## Privacy + Compliance Stack
 
-| Layer | Technology | What's Protected |
+| Layer | Technology | Purpose |
 |-------|------------|------------------|
 | **FHE (Inco Lightning)** | Homomorphic encryption | Pool reserves, swap amounts, fees - all encrypted as `Euint128` |
+| **c-SPL (Inco Token)** | Confidential tokens | User balances stored encrypted, transfers hide amounts |
 | **ZK (Light Protocol V2)** | Zero-knowledge proofs | Pool state stored as compressed account with validity proofs |
-
-> **Why not TEE?** MagicBlock TEE creates an isolated ephemeral environment that cannot clone Light Protocol programs from Solana mainstate. See `scripts/verify-privacy-layers.ts` for proof.
+| **Compliance (Range)** | Risk API | Sanctions screening & wallet risk scoring before swaps |
 
 ---
 
@@ -21,22 +22,26 @@ VelvetSwap is a **constant-product AMM** where nobody — not validators, not in
 
 ```mermaid
 graph TB
-    subgraph "Privacy Stack"
+    subgraph "Privacy + Compliance Stack"
         A[/"Swap Amounts"/] --> INCO["Inco Lightning<br/>(FHE Encryption)"]
-        B[/"Pool State"/] --> LIGHT["Light Protocol<br/>(ZK Compression)"]
-        C[/"Execution"/] --> PER["MagicBlock PER<br/>(TEE)"]
+        B[/"Token Balances"/] --> TOKEN["Inco Token<br/>(c-SPL)"]
+        C[/"Pool State"/] --> LIGHT["Light Protocol<br/>(ZK Compression)"]
+        D[/"Wallet Risk"/] --> RANGE["Range Protocol<br/>(Compliance API)"]
     end
     
     INCO --> PROGRAM["VelvetSwap Program"]
+    TOKEN --> PROGRAM
     LIGHT --> PROGRAM
-    PER --> PROGRAM
+    RANGE -.->|Pre-swap check| PROGRAM
     
     style A fill:#7C3AED,color:#fff
     style B fill:#7C3AED,color:#fff
     style C fill:#7C3AED,color:#fff
-    style INCO fill:#1e1e2e,color:#fff,stroke:#7C3AED
-    style LIGHT fill:#1e1e2e,color:#fff,stroke:#22C55E
-    style PER fill:#1e1e2e,color:#fff,stroke:#3B82F6
+    style D fill:#3B82F6,color:#fff
+    style INCO fill:#1e1e2e,color:#fff,stroke:#22C55E
+    style TOKEN fill:#1e1e2e,color:#fff,stroke:#22C55E
+    style LIGHT fill:#1e1e2e,color:#fff,stroke:#7C3AED
+    style RANGE fill:#1e1e2e,color:#fff,stroke:#3B82F6
     style PROGRAM fill:#9945FF,color:#fff
 ```
 
@@ -78,12 +83,18 @@ graph TB
 sequenceDiagram
     participant User
     participant Frontend
+    participant Range as Range Protocol
     participant Program as VelvetSwap
     participant IncoToken as Inco Token (c-SPL)
     participant IncoFHE as Inco Lightning (FHE)
     participant Light as Light Protocol
 
-    User->>Frontend: Enter swap amount (0.03 SOL)
+    User->>Frontend: Connect wallet + Enter 0.03 SOL
+    
+    Note over Frontend,Range: Compliance Check (Pre-swap)
+    Frontend->>Range: GET /v1/risk/address?network=solana
+    Range-->>Frontend: {riskScore: 1, isCompliant: true}
+    
     Frontend->>Frontend: Encrypt amount as Euint128
     Frontend->>Light: Fetch pool state + validity proof
     Light-->>Frontend: Compressed pool data
@@ -245,11 +256,13 @@ const tx = await swapExactIn({
 
 ---
 
-## Security Considerations
+## Security & Compliance
 
 - **FHE Encryption**: All amounts are encrypted client-side before submission
 - **ZK Proofs**: Light Protocol validates state transitions without revealing data
-- **TEE Execution**: MagicBlock PER ensures computation happens in isolated environment
+- **Confidential Tokens**: Inco Token c-SPL hides user balances from observers
+- **Sanctions Screening**: Range Protocol checks wallets against OFAC/EU/UK sanctions lists
+- **Risk Scoring**: ML-based threat detection blocks high-risk addresses (score ≥ 5/10)
 - **Authority Controls**: Only pool authority can add/remove liquidity
 
 ---
@@ -260,8 +273,9 @@ const tx = await swapExactIn({
 |----------|-----|
 | Frontend | [velvet-rope](../velvet-rope) |
 | Inco Lightning Docs | https://docs.inco.org/svm/home |
-| MagicBlock PER Docs | https://docs.magicblock.gg/pages/private-ephemeral-rollups-pers |
 | Light Protocol Docs | https://docs.lightprotocol.com |
+| Range Protocol Docs | https://docs.range.org/risk-api/risk-introduction |
+| Range Risk API | https://api.range.org/v1/risk/address |
 
 ---
 
