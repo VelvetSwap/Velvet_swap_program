@@ -11,17 +11,12 @@
 | **FHE (Inco Lightning)** | Homomorphic encryption | Pool reserves, swap amounts, fees stored as `Euint128` |
 | **ZK (Light Protocol V2)** | Zero-knowledge proofs | Pool state in compressed accounts with validity proofs |
 
-### Why Not TEE?
+### Compliance Layer
 
-MagicBlock TEE was evaluated but is **incompatible** with Light Protocol:
-
-```
-Error: Cloner error: Failed to clone program SySTEM1eSU2p4BGQfQpimFEWWSC1XDFeun3Nqzz3rT7
-```
-
-- Light Protocol programs require merkle trees stored on Solana mainstate
-- TEE creates isolated ephemeral environment that cannot access mainstate programs
-- Verified via `scripts/verify-privacy-layers.ts`
+**Range Protocol** provides pre-swap compliance:
+- Sanctions screening (OFAC/EU/UK)
+- ML-based risk scoring (blocks score ≥ 5/10)
+- API: `GET https://api.range.org/v1/risk/address?network=solana`
 
 ---
 
@@ -92,7 +87,7 @@ seeds = ["pool_authority", mint_a, mint_b]
 pool_authority_pda = PDA(seeds, program_id)
 ```
 
-This PDA is **delegated to MagicBlock TEE** for private execution.
+This PDA signs CPI calls to Inco Token for confidential transfers.
 
 ### 3. Compressed Account Address
 
@@ -135,46 +130,50 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant TEE as MagicBlock TEE
+    participant Range as Range Protocol
     participant Program as VelvetSwap
-    participant Inco as Inco Lightning
+    participant IncoFHE as Inco Lightning
+    participant IncoToken as Inco Token
     participant Light as Light Protocol
 
+    Client->>Range: Check compliance (risk score)
+    Range-->>Client: {riskScore: 1, compliant: true}
     Client->>Client: Encrypt amounts (FHE)
-    Client->>TEE: Submit swap via PER endpoint
-    TEE->>Program: swap_exact_in(proof, pool_meta, ciphertexts, a_to_b)
+    Client->>Light: Fetch pool state + validity proof
+    Light-->>Client: Compressed pool data
     
-    Program->>Program: Load pool state from pool_data
+    Client->>Program: swap_exact_in(proof, pool_meta, ciphertexts, a_to_b)
     
     rect rgb(50, 50, 80)
-        Note over Program,Inco: FHE Computation (all encrypted)
-        Program->>Inco: new_euint128(amount_in_ciphertext)
-        Program->>Inco: new_euint128(amount_out_ciphertext)
-        Program->>Inco: new_euint128(fee_amount_ciphertext)
+        Note over Program,IncoFHE: FHE Computation (all encrypted)
+        Program->>IncoFHE: new_euint128(amount_in_ciphertext)
+        Program->>IncoFHE: new_euint128(amount_out_ciphertext)
         
-        Program->>Inco: e_ge(reserve_out, amount_out)
-        Note over Inco: Check: has_liquidity?
+        Program->>IncoFHE: e_ge(reserve_out, amount_out)
+        Note over IncoFHE: Check: has_liquidity?
         
-        Program->>Inco: e_mul(reserve_in, reserve_out)
-        Note over Inco: old_k = x * y
+        Program->>IncoFHE: e_mul(reserve_in, reserve_out)
+        Note over IncoFHE: old_k = x * y
         
-        Program->>Inco: e_add(reserve_in, amount_in)
-        Program->>Inco: e_sub(reserve_out, amount_out)
+        Program->>IncoFHE: e_add(reserve_in, amount_in)
+        Program->>IncoFHE: e_sub(reserve_out, amount_out)
         
-        Program->>Inco: e_mul(new_reserve_in, new_reserve_out)
-        Note over Inco: new_k = x' * y'
+        Program->>IncoFHE: e_mul(new_reserve_in, new_reserve_out)
+        Note over IncoFHE: new_k = x' * y'
         
-        Program->>Inco: e_ge(new_k, old_k)
-        Note over Inco: Verify: new_k >= old_k
-        
-        Program->>Inco: e_select(k_ok, amount, zero)
-        Note over Inco: Zero out if invariant violated
+        Program->>IncoFHE: e_ge(new_k, old_k)
+        Program->>IncoFHE: e_select(k_ok, amount, zero)
+    end
+    
+    rect rgb(50, 80, 50)
+        Note over Program,IncoToken: Confidential Token Transfers
+        Program->>IncoToken: transfer(user → pool_vault, encrypted_in)
+        Program->>IncoToken: transfer(pool_vault → user, encrypted_out)
     end
     
     Program->>Light: Update compressed pool state
-    Light-->>Program: New validity proof
-    Program-->>TEE: Swap complete
-    TEE-->>Client: Transaction signature
+    Light-->>Program: State finalized
+    Program-->>Client: Transaction signature
 ```
 
 ### Add/Remove Liquidity
@@ -268,40 +267,36 @@ flowchart LR
 
 ---
 
-## MagicBlock PER Integration
+## Range Protocol Integration
 
-### Permission Setup
+### Compliance Flow
 
 ```mermaid
 flowchart TB
-    subgraph "Setup Phase"
-        A[Create Permission] --> B[Delegate PDA to TEE]
-        B --> C[Wait for Permission Active]
+    subgraph "Pre-Swap Check"
+        A[User connects wallet] --> B[Frontend calls Range API]
+        B --> C{Risk Score < 5?}
+        C -->|Yes| D[Allow swap]
+        C -->|No| E[Block swap]
     end
 
-    subgraph "Execution Phase"
-        D[Client submits to TEE endpoint] --> E[TEE validates permission]
-        E --> F[Execute in isolated environment]
-        F --> G[State updates committed]
+    subgraph "Risk Categories"
+        F[Sanctions: OFAC/EU/UK]
+        G[Hack funds]
+        H[Terrorism financing]
+        I[High-risk behavior]
     end
-
-    C --> D
-
-    style A fill:#F59E0B,color:#fff
-    style B fill:#F59E0B,color:#fff
-    style E fill:#F59E0B,color:#fff
-    style F fill:#F59E0B,color:#fff
 ```
 
-### Permission Members
+### API Response
 
-```rust
-members: [
-    { flags: AUTHORITY | TX_LOGS | TX_BALANCES | TX_MESSAGE | ACCOUNT_SIGNATURES, pubkey: authority },
-    { flags: AUTHORITY | TX_LOGS | TX_BALANCES | TX_MESSAGE | ACCOUNT_SIGNATURES, pubkey: pool_authority_pda },
-    { flags: AUTHORITY | TX_LOGS | TX_BALANCES | TX_MESSAGE | ACCOUNT_SIGNATURES, pubkey: tee_validator },
-    { flags: AUTHORITY | TX_LOGS | TX_BALANCES | TX_MESSAGE | ACCOUNT_SIGNATURES, pubkey: program_id },
-]
+```typescript
+interface AddressRiskResponse {
+    riskScore: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+    riskLevel: "Very low risk" | "Low risk" | "Medium risk" | "High risk" | "CRITICAL RISK";
+    reasoning: string;
+    maliciousAddressesFound: { address: string; distance: number; category: string }[];
+}
 ```
 
 ---
@@ -357,33 +352,32 @@ flowchart LR
 
 ---
 
-## Security Model
+## Security & Compliance Model
 
 ```mermaid
 flowchart TB
-    subgraph "Trust Assumptions"
+    subgraph "Privacy Guarantees"
         T1["Inco Lightning FHE<br/>Cryptographic security"]
-        T2["Light Protocol ZK<br/>Proof soundness"]
-        T3["MagicBlock TEE<br/>Hardware isolation"]
+        T2["Inco Token c-SPL<br/>Hidden balances"]
+        T3["Light Protocol ZK<br/>Proof soundness"]
     end
 
-    subgraph "Guarantees"
-        G1["Amounts hidden from validators"]
-        G2["Reserves hidden from indexers"]
-        G3["Execution hidden from observers"]
+    subgraph "Compliance Guarantees"
+        C1["Range Protocol<br/>Sanctions screening"]
+    end
+
+    subgraph "What's Protected"
+        G1["Swap amounts hidden"]
+        G2["Pool reserves hidden"]
+        G3["User balances hidden"]
+        G4["Sanctioned addresses blocked"]
     end
 
     T1 --> G1
     T1 --> G2
-    T2 --> G2
-    T3 --> G3
-
-    style T1 fill:#22C55E,color:#fff
-    style T2 fill:#3B82F6,color:#fff
-    style T3 fill:#F59E0B,color:#fff
-    style G1 fill:#7C3AED,color:#fff
-    style G2 fill:#7C3AED,color:#fff
-    style G3 fill:#7C3AED,color:#fff
+    T2 --> G3
+    T3 --> G2
+    C1 --> G4
 ```
 
 ---
@@ -392,17 +386,14 @@ flowchart TB
 
 ```
 programs/light_swap_psp/src/lib.rs
-├── compute_swap_updates()     # FHE swap math (lines 29-106)
-├── create_permission()        # PER permission setup (lines 113-143)
-├── delegate_pda()             # TEE delegation (lines 146-160)
-├── initialize_pool()          # Pool creation (lines 162-222)
-├── add_liquidity()            # LP deposit (lines 224-275)
-├── remove_liquidity()         # LP withdrawal (lines 277-328)
-├── swap_exact_in()            # Core swap (lines 330-407)
-├── Account structs            # Anchor contexts (lines 410-475)
-├── SwapPool                   # Pool state struct (lines 477-497)
-├── ErrorCode                  # Custom errors (lines 499-511)
-└── AccountType + helpers      # PDA derivation (lines 513-526)
+├── compute_swap_updates()     # FHE swap math
+├── initialize_pool()          # Pool creation with encrypted reserves
+├── add_liquidity()            # LP deposit (authority only)
+├── remove_liquidity()         # LP withdrawal (authority only)
+├── swap_exact_in()            # Core swap with Inco Token transfers
+├── SwapExactIn                # Anchor accounts context
+├── SwapPool                   # Pool state struct (compressed)
+└── ErrorCode                  # Custom errors
 ```
 
 ---
@@ -411,10 +402,10 @@ programs/light_swap_psp/src/lib.rs
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Compute Units | ~800,000 | Per swap (FHE heavy) |
+| Compute Units | ~326,914 | Per swap (verified on devnet) |
 | Account Size | ~500 bytes | Compressed pool state |
 | Validity Proof | ~1-2 seconds | Light RPC latency |
-| TEE Overhead | ~500ms | PER execution |
+| Compliance Check | ~200ms | Range API call |
 
 ---
 

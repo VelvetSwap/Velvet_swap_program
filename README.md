@@ -125,8 +125,7 @@ sequenceDiagram
 | `add_liquidity` | Add encrypted liquidity to pool | Authority only |
 | `remove_liquidity` | Remove encrypted liquidity from pool | Authority only |
 | `swap_exact_in` | Execute private swap with FHE constant-product math | Anyone |
-| `create_permission` | Setup MagicBlock PER permissions for pool authority | Anyone |
-| `delegate_pda` | Delegate pool authority PDA to TEE validator | Anyone |
+| `swap_exact_out` | Execute private swap specifying exact output | Anyone |
 
 ---
 
