@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/light_swap_psp"
 ]
 resolver = "2"
 
