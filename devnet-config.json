@@ -1,0 +1,10 @@
+{
+  "incoMintA": "4AJDgxnHDNP7y9wSD24sP7YUhQrMyprLUeuRwEwYu6cy",
+  "incoMintB": "CvymLX1Tm6btpRJdfGeQ34k726yQnXSn1V7G4fworMaG",
+  "poolVaultA": "8cEgrChzTtBxucAFqSnM5QAR1NuKRZEs5Z1U9QEfLsKi",
+  "poolVaultB": "DoESWTXqLEiKyUWVUGKXhTQXrL3oN5HLiRxG781W8Hwx",
+  "poolAuthorityPda": "DSM8WDdZ5s3xkKbjtmzxpd59J42cuTZ1AJtFJTzLMkFS",
+  "incoTokenProgram": "CYVSeUyVzHGVcrxsJt3E8tbaPCQT8ASdRR45g5WxUEW7",
+  "incoLightningProgram": "5sjEbPiqgZrYwR31ahR6Uk9wf5awoX61YGg7jExQSwaj",
+  "swapProgram": "4b8jCufu7b4WKXdxFRQHWSks4QdskW62qF7tApSNXuZD"
+}
