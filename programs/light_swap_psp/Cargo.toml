@@ -1,0 +1,29 @@
+[package]
+name = "light_swap_psp"
+version = "0.1.0"
+description = "Light Protocol PSP swap scaffold"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "light_swap_psp"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+idl-build = ["anchor-lang/idl-build", "light-sdk/idl-build"]
+anchor-debug = []
+no-log-ix-name = []
+
+[dependencies]
+anchor-lang = "0.31.1"
+light-sdk = { version = "0.19.0", features = ["anchor", "v2", "cpi-context"] }
+light-compressed-account = { version = "0.3.0", features = ["anchor"] }
+inco-lightning = { version = "0.1.4", features = ["cpi"] }
+ephemeral-rollups-sdk = { version = "0.8.0", features = ["anchor", "access-control"] }
+borsh = "0.10.4"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(target_os, values(\"solana\"))"] }
