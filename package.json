@@ -5,6 +5,7 @@
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check",
     "light:private-payments": "ts-node app/light/private-payments.ts",
     "init-pool": "ts-node scripts/init-permanent-pool.ts",
+    "setup-per": "ts-node scripts/setup-per-permission.ts",
     "ts-mocha": "ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""
   },
   "dependencies": {
