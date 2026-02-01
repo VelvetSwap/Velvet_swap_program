@@ -266,7 +266,6 @@ const tx = await swapExactIn({
 - **ZK Proofs**: Light Protocol validates state transitions without revealing data
 - **Confidential Tokens**: Inco Token c-SPL hides user balances from observers
 - **Sanctions Screening**: Range Protocol checks wallets against OFAC/EU/UK sanctions lists
-- **Risk Scoring**: ML-based threat detection blocks high-risk addresses (score ≥ 5/10)
 - **Authority Controls**: Only pool authority can add/remove liquidity
 
 ---
@@ -275,7 +274,7 @@ const tx = await swapExactIn({
 
 | Resource | URL |
 |----------|-----|
-| Frontend | [velvet-rope](../velvet-rope) |
+| Frontend | [velvet-rope](https://github.com/VelvetSwap/Velvet_frontend) |
 | Inco Lightning Docs | https://docs.inco.org/svm/home |
 | Light Protocol Docs | https://docs.lightprotocol.com |
 | Range Protocol Docs | https://docs.range.org/risk-api/risk-introduction |
