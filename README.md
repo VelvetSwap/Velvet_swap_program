@@ -16,6 +16,11 @@
 
 ---
 
+## Demo Video
+
+https://github.com/user-attachments/assets/baf6b35d-6741-479c-9336-4effe6609f7e
+
+
 ## Overview
 
 VelvetSwap is a **constant-product AMM** where nobody — not validators, not indexers, not MEV bots — can see how much you're swapping.
