@@ -1,90 +1,62 @@
 # VelvetMesh Architecture
 
-> Private poolless intent liquidity by VelvetSwap.
+> Private intent liquidity on top of VelvetSwap.
 
-VelvetMesh adds a private P2P intent/RFQ layer on top of the existing
-VelvetSwap confidential AMM. The existing `light_swap_psp` program remains the
-confidential AMM fallback and Solana settlement foundation.
+## Architecture Goal
 
-## System Thesis
+VelvetMesh is the product evolution of VelvetSwap, not a separate rewrite.
+VelvetSwap remains the confidential AMM and settlement foundation. VelvetMesh
+adds a private intent and RFQ layer so the full product becomes:
 
-VelvetMesh avoids shared pool exposure as the default user path. A user creates
-an encrypted intent with hidden size, price, slippage, and risk preferences.
-Makers, fillers, or agents submit private offers. The accepted fill settles
-through a selected route:
+1. Create an encrypted intent.
+2. Collect private maker/filler quotes.
+3. Request a private match boundary through Arcium.
+4. Accept the verified quote.
+5. Settle privately through MagicBlock and shield the payout through Umbra.
 
-- direct Solana P2P fill
-- VelvetSwap confidential AMM fallback
-- Umbra shielded payout path
-- MagicBlock real-time private RFQ session handoff
-- Jupiter public fallback route
+The architecture should always explain that path first. The fallback AMM exists,
+but it is not the main user story anymore.
 
-Arcium is the primary encrypted computation path for intent and offer
-evaluation. Umbra and MagicBlock are the current sponsor-aligned product
-extensions: shielded post-match payouts and real-time private RFQ sessions.
-Cross-chain/Ika routes are parked as future optional adapters.
-
-## Target Layering
+## Layer Model
 
 ```mermaid
 graph TB
     USER["User"]
+    FRONTEND["VelvetMesh Frontend"]
     INTENT["VelvetMesh<br/>Private Intent/RFQ Layer"]
-    ARCIUM["Arcium<br/>Encrypted Intent Computation"]
+    ARCIUM["Arcium<br/>Private Match Boundary"]
     MATCH["Maker/Filler<br/>Private Quote Selection"]
     VERIFY["Verifier Handoff<br/>record_private_match"]
     ROUTER["Settlement Router"]
-    P2P["Direct Solana<br/>P2P Fill"]
+    MAGIC["MagicBlock<br/>Private Payment Rail"]
+    UMBRA["Umbra<br/>Shielded Payout Rail"]
     SWAP["VelvetSwap<br/>Confidential AMM Fallback"]
-    UMBRA["Umbra<br/>Shielded Payout"]
-    MAGIC["MagicBlock<br/>Private RFQ Session"]
-    JUP["Jupiter<br/>Public Fallback Quote"]
+    JUP["Jupiter<br/>Public Quote Reference"]
 
-    USER --> INTENT
+    USER --> FRONTEND
+    FRONTEND --> INTENT
     INTENT --> ARCIUM
     ARCIUM --> MATCH
     MATCH --> VERIFY
     VERIFY --> ROUTER
-    ROUTER --> P2P
-    ROUTER --> SWAP
-    ROUTER --> UMBRA
     ROUTER --> MAGIC
+    ROUTER --> UMBRA
+    ROUTER --> SWAP
     ROUTER --> JUP
-```
-
-## Planned Modules
-
-```txt
-programs/
-  light_swap_psp/          # existing VelvetSwap confidential AMM
-  velvet_mesh/             # private intent/RFQ state machine
-
-packages/
-  velvetmesh-core/         # local intent/RFQ policy and settlement handoff
-  umbra-adapter/           # shielded payout boundary
-  magicblock-adapter/      # real-time RFQ boundary
-  torque-adapter/          # optional liquidity incentive boundary
-  jupiter-adapter/         # optional public fallback quote boundary
-  ika-adapter/             # parked future cross-chain route boundary
 ```
 
 ## Current Repo Truth
 
-The current on-chain implementation has two layers:
+The repo contains three important implementation layers:
 
-- `programs/light_swap_psp`: VelvetSwap confidential AMM scaffold using Light
-  Protocol compressed state, Inco encrypted values, Inco Token confidential
-  token transfers, and MagicBlock dependencies in the test/demo surface.
-- `programs/velvet_mesh`: private intent/RFQ state machine for encrypted intent
-  creation, encrypted maker quotes, Arcium computation requests,
-  verifier-authorized match recording, accepted matches, and settlement
-  readiness.
+- `programs/light_swap_psp`: VelvetSwap confidential AMM foundation.
+- `programs/velvet_mesh`: private intent/RFQ state machine.
+- `arcium/velvet_mesh_matcher`: isolated Arcium matcher workspace.
 
-The current `compute_swap_updates` path is a demo passthrough, so docs and demo
-copy must distinguish between the existing confidential transfer/settlement
-surface and production-complete encrypted AMM math.
+The current product should be described in terms of those layers, not as a
+generic sponsor showcase.
 
-## VelvetMesh State Flow
+## State Flow
 
 ```mermaid
 stateDiagram-v2
@@ -93,434 +65,92 @@ stateDiagram-v2
     Open --> ComputationRequested: request_private_match
     ComputationRequested --> MatchReady: record_private_match
     MatchReady --> Accepted: accept_quote
-    Accepted --> SettlementReady: mark_settlement_ready
+    Accepted --> SettlementReady: prepare_settlement_handoff
+    SettlementReady --> Ready: mark_settlement_ready
     Open --> Cancelled: cancel_intent
 ```
 
-`record_private_match` is the trust boundary between Arcium computation and
-VelvetMesh settlement. It requires the intent's configured match verifier to
-sign and checks that the selected quote commitment, route, and computation id
-match the requested private computation before `accept_quote` can succeed.
-For production Arcium flows, the match verifier should be the Arcium matcher's
-signer PDA; the callback verifies `SignedComputationOutputs` and signs the CPI
-into VelvetMesh with that PDA.
+## Meaning Of Each Stage
 
----
+### `create_intent`
 
-# VelvetSwap Architecture
+The user creates a private trade intent with encrypted size, price, and route
+preferences.
 
-> Technical deep-dive into the confidential AMM implementation.
+### `submit_quote`
 
----
+Makers or fillers attach private quote commitments to the open intent.
 
-## Privacy Layers
+### `request_private_match`
 
-| Layer | Technology | What's Protected |
-|-------|------------|------------------|
-| **FHE (Inco Lightning)** | Homomorphic encryption | Pool reserves, swap amounts, fees stored as `Euint128` |
-| **ZK (Light Protocol V2)** | Zero-knowledge proofs | Pool state in compressed accounts with validity proofs |
+The intent is moved into private computation. This is where Arcium becomes the
+match boundary.
 
-### Compliance Layer
+### `record_private_match`
 
-**Range Protocol** provides pre-swap compliance:
-- Sanctions screening (OFAC/EU/UK)
-- ML-based risk scoring (blocks score ≥ 5/10)
-- API: `GET https://api.range.org/v1/risk/address?network=solana`
+This is the trust boundary. A verifier records the winning quote commitment,
+route, and computation id. Until this exists, the intent should not be
+presented as settleable.
 
----
+### `accept_quote`
 
-## System Overview
+The owner accepts the verified quote once the match is ready.
 
-```mermaid
-graph TB
-    subgraph "Client Layer"
-        UI["VelvetSwap Frontend<br/>(Next.js)"]
-        SDK["Swap Client SDK<br/>(TypeScript)"]
-    end
+### `prepare_settlement_handoff`
 
-    subgraph "Privacy Layer"
-        INCO["Inco Lightning<br/>FHE Encryption"]
-        LIGHT["Light Protocol V2<br/>ZK Compression"]
-    end
+The owner records the settlement payload hash for the selected route.
 
-    subgraph "Solana Runtime"
-        PROGRAM["light_swap_psp<br/>Confidential AMM"]
-        POOL[("SwapPool<br/>(Compressed)")]
-    end
+### `mark_settlement_ready`
 
-    UI --> SDK
-    SDK --> |"Helius RPC"| PROGRAM
-    PROGRAM --> INCO
-    PROGRAM --> LIGHT
-    PROGRAM --> POOL
+The configured settlement verifier confirms the handoff and allows settlement.
 
-    style UI fill:#7C3AED,color:#fff
-    style SDK fill:#7C3AED,color:#fff
-    style INCO fill:#22C55E,color:#fff
-    style LIGHT fill:#3B82F6,color:#fff
-    style PROGRAM fill:#9945FF,color:#fff
-    style POOL fill:#1e1e2e,color:#fff,stroke:#9945FF
+## Settlement Router
+
+The settlement router is route selection, not a marketing list.
+
+- **MagicBlock** handles the private USDC payment rail.
+- **Umbra** handles the shielded payout/balance rail.
+- **VelvetSwap** remains the confidential AMM fallback.
+- **Jupiter** is the public quote reference and comparison rail.
+
+The architecture should make it obvious that the system can settle through
+different rails while keeping the same private intent story.
+
+## Product Constraints
+
+The repo is intentionally strict about a few things:
+
+- Arcium-backed intents are not settleable until the verifier-gated match path
+  exists.
+- Sponsor settlement fails closed if the payload or verifier is wrong.
+- The fallback AMM should not be described as production-complete encrypted
+  constant-product math until that path is verified.
+- Ika stays parked in the current product narrative until there is a real
+  Solana MPC path worth shipping.
+
+## Frontend Relationship
+
+The separate frontend repo is responsible for presenting the product:
+
+- private intent creation
+- quote lifecycle
+- match readiness
+- settlement receipts
+- explorer links and market references
+
+That frontend should read like one product surface, not three sponsor demos.
+
+## Repo Summary
+
+```txt
+programs/
+  light_swap_psp/          # VelvetSwap confidential AMM fallback
+  velvet_mesh/             # private intent/RFQ state machine
+
+arcium/
+  velvet_mesh_matcher/     # private match workspace
+
+README.md                  # product narrative
+ARCHITECTURE.md            # current architecture and trust boundaries
 ```
 
----
-
-## Core Components
-
-### 1. Pool State (Compressed Account)
-
-The pool state is stored as a **Light Protocol compressed account** with FHE-encrypted fields:
-
-```mermaid
-erDiagram
-    SwapPool {
-        Pubkey authority "Pool admin (can add/remove liquidity)"
-        Pubkey pool_authority "PDA for signing transfers"
-        Pubkey mint_a "Token A mint address"
-        Pubkey mint_b "Token B mint address"
-        Euint128 reserve_a "ENCRYPTED: Token A reserves"
-        Euint128 reserve_b "ENCRYPTED: Token B reserves"
-        Euint128 protocol_fee_a "ENCRYPTED: Accumulated fees (A)"
-        Euint128 protocol_fee_b "ENCRYPTED: Accumulated fees (B)"
-        u16 fee_bps "Fee in basis points (e.g., 30 = 0.3%)"
-        bool is_paused "Emergency pause flag"
-        i64 last_update_ts "Last state update timestamp"
-    }
-```
-
-### 2. Pool Authority PDA
-
-Derived deterministically for each token pair:
-
-```
-seeds = ["pool_authority", mint_a, mint_b]
-pool_authority_pda = PDA(seeds, program_id)
-```
-
-This PDA signs CPI calls to Inco Token for confidential transfers.
-
-### 3. Compressed Account Address
-
-Pool address is derived using Light Protocol V2:
-
-```
-seeds = ["pool", mint_a, mint_b]
-address_seed = deriveAddressSeedV2(seeds)
-pool_address = deriveAddressV2(address_seed, batch_address_tree, program_id)
-```
-
----
-
-## Instruction Flow
-
-### Initialize Pool
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant LightRPC as Light RPC
-    participant Program as VelvetSwap
-    participant Inco as Inco Lightning
-    participant Light as Light Protocol
-
-    Client->>LightRPC: getValidityProofV0([], [new_address])
-    LightRPC-->>Client: validity_proof, root_indices
-    
-    Client->>Program: initialize_pool(proof, mint_a, mint_b, fee_bps)
-    Program->>Inco: as_euint128(0) × 4
-    Note over Program,Inco: Initialize encrypted reserves & fees to zero
-    
-    Program->>Light: Create compressed account
-    Light-->>Program: Account created at derived address
-    Program-->>Client: Success
-```
-
-### Swap Exact In
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Range as Range Protocol
-    participant Program as VelvetSwap
-    participant IncoFHE as Inco Lightning
-    participant IncoToken as Inco Token
-    participant Light as Light Protocol
-
-    Client->>Range: Check compliance (risk score)
-    Range-->>Client: {riskScore: 1, compliant: true}
-    Client->>Client: Encrypt amounts (FHE)
-    Client->>Light: Fetch pool state + validity proof
-    Light-->>Client: Compressed pool data
-    
-    Client->>Program: swap_exact_in(proof, pool_meta, ciphertexts, a_to_b)
-    
-    rect rgb(50, 50, 80)
-        Note over Program,IncoFHE: FHE Computation (all encrypted)
-        Program->>IncoFHE: new_euint128(amount_in_ciphertext)
-        Program->>IncoFHE: new_euint128(amount_out_ciphertext)
-        
-        Program->>IncoFHE: e_ge(reserve_out, amount_out)
-        Note over IncoFHE: Check: has_liquidity?
-        
-        Program->>IncoFHE: e_mul(reserve_in, reserve_out)
-        Note over IncoFHE: old_k = x * y
-        
-        Program->>IncoFHE: e_add(reserve_in, amount_in)
-        Program->>IncoFHE: e_sub(reserve_out, amount_out)
-        
-        Program->>IncoFHE: e_mul(new_reserve_in, new_reserve_out)
-        Note over IncoFHE: new_k = x' * y'
-        
-        Program->>IncoFHE: e_ge(new_k, old_k)
-        Program->>IncoFHE: e_select(k_ok, amount, zero)
-    end
-    
-    rect rgb(50, 80, 50)
-        Note over Program,IncoToken: Confidential Token Transfers
-        Program->>IncoToken: transfer(user → pool_vault, encrypted_in)
-        Program->>IncoToken: transfer(pool_vault → user, encrypted_out)
-    end
-    
-    Program->>Light: Update compressed pool state
-    Light-->>Program: State finalized
-    Program-->>Client: Transaction signature
-```
-
-### Add/Remove Liquidity
-
-```mermaid
-sequenceDiagram
-    participant Authority
-    participant Program as VelvetSwap
-    participant Inco as Inco Lightning
-    participant Light as Light Protocol
-
-    Authority->>Program: add_liquidity(proof, pool_meta, amount_a, amount_b)
-    
-    Program->>Program: Verify authority == pool.authority
-    Program->>Program: Verify !pool.is_paused
-    
-    Program->>Inco: new_euint128(amount_a_ciphertext)
-    Program->>Inco: new_euint128(amount_b_ciphertext)
-    
-    Program->>Inco: e_add(reserve_a, amount_a)
-    Program->>Inco: e_add(reserve_b, amount_b)
-    
-    Program->>Light: Update compressed pool state
-    Light-->>Program: Success
-    Program-->>Authority: Liquidity added
-```
-
----
-
-## FHE Operations Detail
-
-### Constant Product AMM Math
-
-The swap uses the standard `x * y = k` invariant, but **entirely on encrypted values**:
-
-```mermaid
-flowchart LR
-    subgraph "Input (Encrypted)"
-        AI["amount_in<br/>Euint128"]
-        AO["amount_out<br/>Euint128"]
-        FEE["fee_amount<br/>Euint128"]
-    end
-
-    subgraph "Pool State (Encrypted)"
-        RA["reserve_a<br/>Euint128"]
-        RB["reserve_b<br/>Euint128"]
-    end
-
-    subgraph "FHE Operations"
-        CHK1["e_ge(reserve_out, amount_out)<br/>Liquidity check"]
-        MUL1["e_mul(reserve_in, reserve_out)<br/>old_k"]
-        ADD["e_add(reserve_in, amount_in)<br/>new_reserve_in"]
-        SUB["e_sub(reserve_out, amount_out)<br/>new_reserve_out"]
-        MUL2["e_mul(new_in, new_out)<br/>new_k"]
-        CHK2["e_ge(new_k, old_k)<br/>Invariant check"]
-        SEL["e_select(valid, amount, 0)<br/>Zero if invalid"]
-    end
-
-    AI --> ADD
-    AO --> SUB
-    RA --> MUL1
-    RB --> MUL1
-    RA --> ADD
-    RB --> SUB
-    MUL1 --> CHK2
-    ADD --> MUL2
-    SUB --> MUL2
-    MUL2 --> CHK2
-    CHK1 --> SEL
-    CHK2 --> SEL
-
-    style AI fill:#7C3AED,color:#fff
-    style AO fill:#7C3AED,color:#fff
-    style FEE fill:#7C3AED,color:#fff
-    style RA fill:#22C55E,color:#fff
-    style RB fill:#22C55E,color:#fff
-```
-
-### Operation Complexity
-
-| Operation | Inco CPI Calls | Purpose |
-|-----------|----------------|---------|
-| `new_euint128` | 3 | Parse input ciphertexts |
-| `as_euint128` | 1 | Create zero constant |
-| `e_ge` | 2 | Liquidity + invariant checks |
-| `e_add` | 2 | Update reserves |
-| `e_sub` | 1 | Update output reserve |
-| `e_mul` | 2 | Compute k values |
-| `e_select` | 3 | Conditional zeroing |
-| **Total** | **14** | Per swap |
-
----
-
-## Range Protocol Integration
-
-### Compliance Flow
-
-```mermaid
-flowchart TB
-    subgraph "Pre-Swap Check"
-        A[User connects wallet] --> B[Frontend calls Range API]
-        B --> C{Risk Score < 5?}
-        C -->|Yes| D[Allow swap]
-        C -->|No| E[Block swap]
-    end
-
-    subgraph "Risk Categories"
-        F[Sanctions: OFAC/EU/UK]
-        G[Hack funds]
-        H[Terrorism financing]
-        I[High-risk behavior]
-    end
-```
-
-### API Response
-
-```typescript
-interface AddressRiskResponse {
-    riskScore: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
-    riskLevel: "Very low risk" | "Low risk" | "Medium risk" | "High risk" | "CRITICAL RISK";
-    reasoning: string;
-    maliciousAddressesFound: { address: string; distance: number; category: string }[];
-}
-```
-
----
-
-## Light Protocol V2 Integration
-
-### Compressed Account Flow
-
-```mermaid
-flowchart LR
-    subgraph "State Tree"
-        ROOT["Merkle Root"]
-        LEAF["Pool Account<br/>(Compressed)"]
-    end
-
-    subgraph "Address Tree"
-        ADDR["Batch Address Tree<br/>amt2kaJA14v3..."]
-    end
-
-    subgraph "Output Queue"
-        QUEUE["Output Queue<br/>oq1na8gojfd..."]
-    end
-
-    ROOT --> LEAF
-    ADDR --> LEAF
-    LEAF --> QUEUE
-
-    style ROOT fill:#3B82F6,color:#fff
-    style LEAF fill:#3B82F6,color:#fff
-    style ADDR fill:#3B82F6,color:#fff
-    style QUEUE fill:#3B82F6,color:#fff
-```
-
-### Key Addresses (Devnet)
-
-| Account | Address |
-|---------|---------|
-| Batch Address Tree | `amt2kaJA14v3urZbZvnc5v2np8jqvc4Z8zDep5wbtzx` |
-| Output Queue | `oq1na8gojfdUhsfCpyjNt6h4JaDWtHf1yQj4koBWfto` |
-| Light System Program | `SySTEM1eSU2p4BGQfQpimFEWWSC1XDFeun3Nqzz3rT7` |
-
----
-
-## Error Handling
-
-| Error | Code | Cause |
-|-------|------|-------|
-| `PoolPaused` | 6000 | Pool is in emergency pause state |
-| `InvalidInputMint` | 6001 | Input token doesn't match pool |
-| `InvalidOutputMint` | 6002 | Output token doesn't match pool |
-| `InvalidPermissionAccount` | 6003 | PDA doesn't match derived address |
-| `Unauthorized` | 6004 | Caller is not pool authority |
-
----
-
-## Security & Compliance Model
-
-```mermaid
-flowchart TB
-    subgraph "Privacy Guarantees"
-        T1["Inco Lightning FHE<br/>Cryptographic security"]
-        T2["Inco Token c-SPL<br/>Hidden balances"]
-        T3["Light Protocol ZK<br/>Proof soundness"]
-    end
-
-    subgraph "Compliance Guarantees"
-        C1["Range Protocol<br/>Sanctions screening"]
-    end
-
-    subgraph "What's Protected"
-        G1["Swap amounts hidden"]
-        G2["Pool reserves hidden"]
-        G3["User balances hidden"]
-        G4["Sanctioned addresses blocked"]
-    end
-
-    T1 --> G1
-    T1 --> G2
-    T2 --> G3
-    T3 --> G2
-    C1 --> G4
-```
-
----
-
-## File Structure
-
-```
-programs/light_swap_psp/src/lib.rs
-├── compute_swap_updates()     # FHE swap math
-├── initialize_pool()          # Pool creation with encrypted reserves
-├── add_liquidity()            # LP deposit (authority only)
-├── remove_liquidity()         # LP withdrawal (authority only)
-├── swap_exact_in()            # Core swap with Inco Token transfers
-├── SwapExactIn                # Anchor accounts context
-├── SwapPool                   # Pool state struct (compressed)
-└── ErrorCode                  # Custom errors
-```
-
----
-
-## Performance Characteristics
-
-| Metric | Value | Notes |
-|--------|-------|-------|
-| Compute Units | ~326,914 | Per swap (verified on devnet) |
-| Account Size | ~500 bytes | Compressed pool state |
-| Validity Proof | ~1-2 seconds | Light RPC latency |
-| Compliance Check | ~200ms | Range API call |
-
----
-
-## Future Improvements
-
-1. **Multi-hop routing** — Chain multiple pools for better prices
-2. **LP tokens** — Fungible representation of liquidity shares
-3. **Attested reveals** — Allow users to prove their swap amounts
-4. **Fee distribution** — Automated protocol fee collection
